@@ -8,7 +8,7 @@ from db_conector import get_db_connection
 SESSION_ID = 1
 DRIVER_IDS = {"LEC": 1, "SAI": 4, "HAM": 5, "NOR": 3, "PIA": 2}
 
-# Tire colors: HARD = white
+# Tire colors
 TIRE_COLORS = {
     "SOFT": "#FF6666",  # red
     "MEDIUM": "#FFCC66",  # yellow

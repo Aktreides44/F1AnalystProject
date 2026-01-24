@@ -1,148 +1,139 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
+from matplotlib.ticker import FuncFormatter
 from db_conector import get_db_connection
 
-SESSION_ID = 1
+# ===============================
+# Configuration
+# ===============================
+SESSION_ID = 1  # Race session ID
+DRIVERS = {"LEC": "Charles Leclerc", "PIA": "Oscar Piastri"}
+
+DRIVER_COLORS = {
+    "Charles Leclerc": "#FF0000",  # red
+    "Oscar Piastri": "#FF8800"     # orange
+}
+
+TYRE_STYLES = {
+    "HARD": "-",    # solid
+    "MEDIUM": "--", # dashed
+    "SOFT": ":"     # optional
+}
 
 # ===============================
-# Load combined lap + sector data
+# Load laps
 # ===============================
-lap_query = """
-SELECT
-    d.abbreviation AS driver,
-    l.lap_number,
-    l.lap_time,
-    l.sector1_time,
-    l.sector2_time,
-    l.sector3_time
+conn = get_db_connection()
+query = """
+SELECT d.full_name AS driver,
+       l.lap_number,
+       l.lap_time,
+       l.pit,
+       l.tyre_compound,
+       l.stint_number
 FROM laps l
 JOIN drivers d ON l.driver_id = d.driver_id
 WHERE l.session_id = %s
-  AND l.pit = 0
-  AND l.lap_time IS NOT NULL
+AND (d.full_name = %s OR d.full_name = %s)
+ORDER BY l.lap_number, d.full_name
 """
-
-conn = get_db_connection()
-laps_df = pd.read_sql(lap_query, conn, params=(SESSION_ID,))
+df = pd.read_sql(query, conn, params=(SESSION_ID, DRIVERS["LEC"], DRIVERS["PIA"]))
 conn.close()
 
-# ===============================
-# Overall performance metrics
-# ===============================
-summary = laps_df.groupby("driver").agg(
-    avg_lap_time=("lap_time", "mean"),
-    std_lap_time=("lap_time", "std"),
-    avg_s1=("sector1_time", "mean"),
-    avg_s2=("sector2_time", "mean"),
-    avg_s3=("sector3_time", "mean"),
-).reset_index()
-
-summary["total_sector_time"] = (
-    summary["avg_s1"] + summary["avg_s2"] + summary["avg_s3"]
-)
-
-summary = summary.sort_values("avg_lap_time")
-
-print("\nOverall Driver Performance Summary\n")
-print(summary[[
-    "driver",
-    "avg_lap_time",
-    "std_lap_time",
-    "total_sector_time"
-]])
+df = df.dropna(subset=["lap_time"])
+df["tyre_compound"] = df["tyre_compound"].str.strip().str.upper()
 
 # ===============================
-# 1️⃣ Lap time trend (pace evolution)
+# Helper to format lap time
 # ===============================
-plt.figure(figsize=(10, 5))
+def format_lap_time(seconds):
+    minutes = int(seconds // 60)
+    sec = seconds % 60
+    return f"{minutes}:{sec:06.3f}"
 
-for driver in laps_df["driver"].unique():
-    d = laps_df[laps_df["driver"] == driver]
-    plt.plot(d["lap_number"], d["lap_time"], label=driver, linewidth=1.5)
+# ===============================
+# Remove pit-out laps for line plot
+# ===============================
+df_line = df[df.groupby(['driver', 'stint_number'])['lap_number'].transform('min') != df['lap_number']]
+
+# ===============================
+# Line plot: lap times with tyre & pit info
+# ===============================
+plt.figure(figsize=(14, 6))
+
+for driver_name in DRIVERS.values():
+    driver_df = df_line[df_line["driver"] == driver_name]
+
+    for tyre, style in TYRE_STYLES.items():
+        tyre_laps = driver_df[driver_df["tyre_compound"] == tyre]
+        if not tyre_laps.empty:
+            plt.plot(
+                tyre_laps["lap_number"],
+                tyre_laps["lap_time"],
+                linestyle=style,
+                color=DRIVER_COLORS[driver_name],
+                marker='o',
+                markersize=4,
+                label=f"{driver_name} – {tyre}"
+            )
+
+    # pit stops as small dots
+    pits = driver_df[driver_df["pit"] == 1]
+    plt.scatter(
+        pits["lap_number"],
+        pits["lap_time"],
+        s=40,  # smaller dots
+        facecolor='white',
+        edgecolor=DRIVER_COLORS[driver_name],
+        linewidth=1.5,
+        zorder=5
+    )
+
+plt.xlabel("Lap Number", color='black')
+plt.ylabel("Lap Time (min:sec.ms)", color='black')
+plt.title("2024 Italian GP – Leclerc vs Piastri Strategy Battle", color='black')
+
+# y-axis formatting using FuncFormatter
+plt.gca().yaxis.set_major_formatter(FuncFormatter(lambda y, _: format_lap_time(y)))
+
+plt.grid(alpha=0.3)
+plt.legend(bbox_to_anchor=(1.05,1), loc='upper left')
+plt.tight_layout()
+plt.show()
+
+# ===============================
+# Cumulative race time per driver
+# ===============================
+df_cumm = df.copy()
+
+# Remove pit-out laps if desired
+df_cumm = df_cumm[df_cumm.groupby(['driver', 'stint_number'])['lap_number'].transform('min') != df_cumm['lap_number']]
+
+# Compute cumulative time
+df_cumm['cum_time'] = df_cumm.groupby('driver')['lap_time'].cumsum()
+
+# ===============================
+# Plot cumulative race time
+# ===============================
+plt.figure(figsize=(14, 6))
+
+for driver_name in DRIVERS.values():
+    driver_df = df_cumm[df_cumm['driver'] == driver_name]
+    plt.plot(
+        driver_df['lap_number'],
+        driver_df['cum_time'],
+        color=DRIVER_COLORS[driver_name],
+        linestyle='-',
+        marker='o',
+        markersize=4,
+        label=driver_name
+    )
 
 plt.xlabel("Lap Number")
-plt.ylabel("Lap Time (s)")
-plt.title("Lap Time Trend – Race Pace Evolution")
-plt.legend()
+plt.ylabel("Cumulative Race Time (s)")
+plt.title("2024 Italian GP – Cumulative Race Time: Leclerc vs Piastri")
 plt.grid(alpha=0.3)
+plt.legend()
 plt.tight_layout()
 plt.show()
 
-# ===============================
-# 2️⃣ Sector contribution comparison
-# ===============================
-sector_df = summary.set_index("driver")[["avg_s1", "avg_s2", "avg_s3"]]
-
-sector_df.plot(
-    kind="bar",
-    stacked=True,
-    figsize=(10, 6)
-)
-
-plt.ylabel("Average Sector Time (s)")
-plt.title("Sector Time Contribution by Driver")
-plt.xticks(rotation=0)
-plt.grid(axis="y", alpha=0.3)
-plt.tight_layout()
-plt.show()
-
-# ===============================
-# 3️⃣ Telemetry correlation heatmap
-# ===============================
-telemetry_query = """
-SELECT
-    d.abbreviation AS driver,
-    t.speed,
-    t.throttle,
-    t.brake,
-    t.gear,
-    l.lap_time
-FROM telemetry t
-JOIN laps l
-  ON t.session_id = l.session_id
- AND t.driver_id = l.driver_id
- AND t.lap_number = l.lap_number
-JOIN drivers d ON d.driver_id = t.driver_id
-WHERE t.session_id = %s
-  AND l.pit = 0
-  AND l.lap_time IS NOT NULL
-"""
-
-conn = get_db_connection()
-tele_df = pd.read_sql(telemetry_query, conn, params=(SESSION_ID,))
-conn.close()
-
-tele_df = tele_df.dropna()
-
-corr = tele_df[["speed", "throttle", "brake", "gear", "lap_time"]].corr(method="pearson")
-
-plt.figure(figsize=(7, 5))
-sns.heatmap(
-    corr,
-    annot=True,
-    cmap="coolwarm",
-    fmt=".2f"
-)
-
-plt.title("Telemetry ↔ Lap Time Correlation (Pearson)")
-plt.tight_layout()
-plt.show()
-
-# ===============================
-# Interpretation summary
-# ===============================
-best_driver = summary.iloc[0]
-
-print("\nFinal Interpretation\n")
-print(
-    f"Fastest overall driver: {best_driver['driver']}\n"
-    f"Average lap time: {best_driver['avg_lap_time']:.3f} s\n"
-    f"Consistency (std dev): {best_driver['std_lap_time']:.3f} s\n"
-)
-
-print(
-    "Sector analysis shows where lap time is gained, while telemetry correlations\n"
-    "indicate that speed and throttle usage are the strongest linear contributors\n"
-    "to lap performance, particularly in a low-interruption race such as Monza."
-)
