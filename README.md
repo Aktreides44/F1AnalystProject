@@ -1,6 +1,6 @@
 # 🏎️ F1 Race Analysis – 2024 Italian Grand Prix
 
-![Formula 1](https://upload.wikimedia.org/wikipedia/en/thumb/3/3b/Formula_1_Logo.svg/1200px-Formula_1_Logo.svg.png)
+![Formula 1]([https://upload.wikimedia.org/wikipedia/en/thumb/3/3b/Formula_1_Logo.svg/1200px-Formula_1_Logo.svg.png](https://www.formula1.com/en/racing/2024/italy))
 
 ## Overview
 
